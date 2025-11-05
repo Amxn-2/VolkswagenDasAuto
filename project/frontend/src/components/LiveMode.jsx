@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import axios from 'axios';
+import { motion } from 'framer-motion';
+import { ArrowLeft, Camera, Video, Upload, Square, MapPin } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import HazardNotifier from './HazardNotifier';
 import NearbyHazardNotifier from './NearbyHazardNotifier';
 import EmergencyBrakeNotifier from './EmergencyBrakeNotifier';
@@ -347,151 +350,276 @@ export default function LiveMode() {
   };
 
   return (
-    <div className="max-w-full mx-auto p-5 bg-white rounded-lg shadow-md">
-      <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
-        <h1 className="text-center mb-5 text-[#2c3e50] text-3xl">Road Hazard Detection</h1>
-        <div className="flex gap-2 flex-wrap">
-          <span className={`px-2.5 py-1.5 rounded-full text-sm font-semibold ${isConnected ? 'bg-[#e6fff0] text-[#0f9d58] border border-[#b7f0d0]' : 'bg-[#fff5e5] text-[#e67e22] border border-[#ffd8a8]'}`}>
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </span>
-          <span className="px-2.5 py-1.5 rounded-full text-sm font-semibold bg-[#eef2f7] text-[#34495e] border border-[#d9e2ec]">
-            Mode: {detectionMode === 'live' ? 'Live Camera' : 'Video File'}
-          </span>
-          {detectionMode === 'video' && (
-            <span className="px-2.5 py-1.5 rounded-full text-sm font-semibold bg-[#eef2f7] text-[#34495e] border border-[#d9e2ec]">
-              Progress: {videoProgress ? `${videoProgress.toFixed(1)}%` : '—'}
-            </span>
-          )}
-          <span className="px-2.5 py-1.5 rounded-full text-sm font-semibold bg-[#eef2f7] text-[#34495e] border border-[#d9e2ec]">
-            FPS: {fps}
-          </span>
-          <span className={`px-2.5 py-1.5 rounded-full text-sm font-semibold ${driverLaneHazardCount > 0 ? 'bg-[#ffeaea] text-[#d32f2f] border border-[#ffbdbd]' : 'bg-[#e6fff0] text-[#0f9d58] border border-[#b7f0d0]'}`}>
-            Lane Hazards: {driverLaneHazardCount}
-          </span>
-        </div>
-      </div>
-
-      {/* Mode Toggle */}
-      <div className="flex flex-col items-center gap-4 mb-5 p-4 bg-[#f8f9fa] rounded-lg">
-        <div className="flex gap-2.5">
-          <button
-            className={`px-6 py-3 text-base font-bold border-2 rounded-md transition-all duration-300 ${detectionMode === 'live' 
-              ? 'bg-[#3498db] text-white border-[#3498db] shadow-md' 
-              : 'bg-white text-[#3498db] border-[#3498db] hover:bg-[#3498db] hover:text-white hover:-translate-y-0.5 hover:shadow-md'} ${uploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-            onClick={() => handleModeSwitch('live')}
-            disabled={uploading}
-          >
-            📹 Live Camera
-          </button>
-          <button
-            className={`px-6 py-3 text-base font-bold border-2 rounded-md transition-all duration-300 ${detectionMode === 'video' 
-              ? 'bg-[#3498db] text-white border-[#3498db] shadow-md' 
-              : 'bg-white text-[#3498db] border-[#3498db] hover:bg-[#3498db] hover:text-white hover:-translate-y-0.5 hover:shadow-md'} ${uploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-            onClick={() => handleModeSwitch('video')}
-            disabled={uploading}
-          >
-            🎬 Video File
-          </button>
-        </div>
-
-        {/* File Upload Section */}
-        {detectionMode === 'video' && (
-          <div className="flex gap-2.5 items-center">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              onChange={handleFileUpload}
-              style={{ display: 'none' }}
-              id="video-upload-input"
-              disabled={uploading}
-            />
-            <label 
-              htmlFor="video-upload-input" 
-              className="px-6 py-3 text-base font-bold border-2 border-[#27ae60] rounded-md bg-white text-[#27ae60] cursor-pointer transition-all duration-300 inline-block hover:bg-[#27ae60] hover:text-white hover:-translate-y-0.5 hover:shadow-md"
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.5 }}
+      className="min-h-screen bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#0f3460]"
+    >
+      {/* Header */}
+      <motion.div 
+        initial={{ y: -50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: 0.2 }}
+        className="bg-white/10 backdrop-blur-lg border-b border-white/20"
+      >
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+          <Link to="/">
+            <motion.button
+              whileHover={{ scale: 1.05, x: -5 }}
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center gap-2 text-white hover:text-[#3498db] transition-colors"
             >
-              {uploading ? 'Uploading...' : '📁 Upload Video'}
-            </label>
-            {detectionMode === 'video' && videoProgress > 0 && (
-              <button 
-                className="px-6 py-3 text-base font-bold border-2 border-[#e74c3c] rounded-md bg-white text-[#e74c3c] cursor-pointer transition-all duration-300 hover:bg-[#e74c3c] hover:text-white hover:-translate-y-0.5 hover:shadow-md"
-                onClick={handleStopVideo}
-              >
-                ⏹ Stop Video
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+              <ArrowLeft className="w-5 h-5" />
+              <span className="font-semibold">Back to Home</span>
+            </motion.button>
+          </Link>
+          
+          <h1 className="text-2xl lg:text-3xl font-bold text-white">
+            Road Hazard Detection
+          </h1>
+          
+          <Link to="/pothole-map">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center gap-2 px-4 py-2 bg-[#3498db] text-white rounded-full font-semibold shadow-lg"
+            >
+              <MapPin className="w-5 h-5" />
+              <span className="hidden sm:inline">View Map</span>
+            </motion.button>
+          </Link>
+        </div>
+      </motion.div>
 
-      {/* Status Display */}
-      <div className={`text-center mb-5 py-2.5 px-4 rounded font-bold text-white ${detectionMode === 'live' 
-        ? 'bg-gradient-to-r from-[#e74c3c] to-[#c0392b]' 
-        : 'bg-gradient-to-r from-[#9b59b6] to-[#8e44ad]'}`}>
-        {detectionMode === 'live' 
-          ? '🔴 Live Camera (YOLO Detection Active)' 
-          : `🎬 Video File Mode ${videoProgress > 0 ? `- ${videoProgress.toFixed(1)}%` : ''}`}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div className="relative rounded-lg overflow-hidden shadow-md bg-white/75 backdrop-blur-md">
-          <div className="flex items-center justify-between py-2.5 px-3 font-semibold text-[#2c3e50] border-b border-black/5">
-            <span>Processed Stream</span>
-          </div>
-          <div className="w-full h-[400px] overflow-hidden relative">
-            {!isConnected && (
-              <div className="absolute inset-0 rounded-lg overflow-hidden">
-                <div className="w-full h-full bg-gradient-to-r from-[#e6eaf0]/70 via-[#f5f7fa]/90 to-[#e6eaf0]/70 animate-shimmer" />
-              </div>
-            )}
-            <video 
-              ref={videoRef} 
-              autoPlay 
-              playsInline 
-              muted 
-              className="w-full h-full object-cover rounded-lg border-2 border-[#3498db]"
-            />
-            <div className="absolute bottom-2.5 right-2.5 bg-black/55 text-white py-1 px-2 rounded-full text-xs flex gap-1.5 items-center">
-              <span className={`w-2 h-2 rounded-full inline-block ${isConnected ? 'bg-[#34c759]' : 'bg-[#ff9f0a]'}`} />
-              <span>{fps} fps</span>
+      <div className="max-w-7xl mx-auto p-6">
+        {/* Status Cards */}
+        <motion.div 
+          initial={{ y: 30, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6"
+        >
+          <div className={`bg-white/10 backdrop-blur-lg rounded-xl p-4 border ${isConnected ? 'border-[#2ecc71]' : 'border-[#e74c3c]'}`}>
+            <div className="text-xs text-gray-300 mb-1">Connection</div>
+            <div className={`text-lg font-bold flex items-center gap-2 ${isConnected ? 'text-[#2ecc71]' : 'text-[#e74c3c]'}`}>
+              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[#2ecc71]' : 'bg-[#e74c3c]'} animate-pulse`}></span>
+              {isConnected ? 'Online' : 'Offline'}
             </div>
           </div>
-        </div>
 
-        <div className="relative rounded-lg overflow-hidden shadow-md bg-white/75 backdrop-blur-md">
-          <div className="flex items-center justify-between py-2.5 px-3 font-semibold text-[#2c3e50] border-b border-black/5">
-            <span>Hazard Map</span>
+          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+            <div className="text-xs text-gray-300 mb-1">Mode</div>
+            <div className="text-lg font-bold text-white flex items-center gap-2">
+              {detectionMode === 'live' ? <Camera className="text-[#3498db] w-5 h-5" /> : <Video className="text-[#9b59b6] w-5 h-5" />}
+              {detectionMode === 'live' ? 'Live' : 'Video'}
+            </div>
           </div>
-          <iframe
-            src="/Map.html"
-            title="Road Hazard Map"
-            className="w-full h-[400px] border-none rounded-lg"
-            allowFullScreen
-          />
+
+          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+            <div className="text-xs text-gray-300 mb-1">FPS</div>
+            <div className="text-lg font-bold text-white">{fps}</div>
+          </div>
+
+          {detectionMode === 'video' && (
+            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+              <div className="text-xs text-gray-300 mb-1">Progress</div>
+              <div className="text-lg font-bold text-white">
+                {videoProgress ? `${videoProgress.toFixed(1)}%` : '—'}
+              </div>
+            </div>
+          )}
+
+          <div className={`bg-white/10 backdrop-blur-lg rounded-xl p-4 border ${driverLaneHazardCount > 0 ? 'border-[#e74c3c]' : 'border-[#2ecc71]'}`}>
+            <div className="text-xs text-gray-300 mb-1">Lane Hazards</div>
+            <div className={`text-lg font-bold ${driverLaneHazardCount > 0 ? 'text-[#e74c3c]' : 'text-[#2ecc71]'}`}>
+              {driverLaneHazardCount}
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Mode Control Panel */}
+        <motion.div 
+          initial={{ y: 30, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 mb-6"
+        >
+          <h2 className="text-white text-lg font-semibold mb-4">Detection Mode</h2>
+          
+          <div className="flex flex-wrap gap-4 mb-4">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className={`flex-1 min-w-[150px] px-6 py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-3 ${
+                detectionMode === 'live' 
+                  ? 'bg-gradient-to-r from-[#3498db] to-[#2980b9] text-white shadow-lg' 
+                  : 'bg-white/5 text-gray-300 hover:bg-white/10 border border-white/20'
+              } ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => handleModeSwitch('live')}
+              disabled={uploading}
+            >
+              <Camera className="w-6 h-6" />
+              <span>Live Camera</span>
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className={`flex-1 min-w-[150px] px-6 py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-3 ${
+                detectionMode === 'video' 
+                  ? 'bg-gradient-to-r from-[#9b59b6] to-[#8e44ad] text-white shadow-lg' 
+                  : 'bg-white/5 text-gray-300 hover:bg-white/10 border border-white/20'
+              } ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => handleModeSwitch('video')}
+              disabled={uploading}
+            >
+              <Video className="w-6 h-6" />
+              <span>Video File</span>
+            </motion.button>
+          </div>
+
+          {/* File Upload Controls */}
+          {detectionMode === 'video' && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-white/20"
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+                id="video-upload-input"
+                disabled={uploading}
+              />
+              <label 
+                htmlFor="video-upload-input" 
+                className={`flex-1 min-w-[150px] px-6 py-3 rounded-xl font-bold cursor-pointer transition-all flex items-center justify-center gap-3 ${
+                  uploading 
+                    ? 'bg-white/10 text-gray-400 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-[#2ecc71] to-[#27ae60] text-white hover:shadow-lg'
+                }`}
+              >
+                <Upload className="w-5 h-5" />
+                <span>{uploading ? 'Uploading...' : 'Upload Video'}</span>
+              </label>
+
+              {videoProgress > 0 && (
+                <motion.button 
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="flex-1 min-w-[150px] px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-[#e74c3c] to-[#c0392b] text-white hover:shadow-lg transition-all flex items-center justify-center gap-3"
+                  onClick={handleStopVideo}
+                >
+                  <StopCircle className="w-5 h-5" />
+                  <span>Stop Video</span>
+                </motion.button>
+              )}
+            </motion.div>
+          )}
+        </motion.div>
+
+        {/* Video and Map Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* Processed Stream */}
+          <motion.div 
+            initial={{ x: -30, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ delay: 0.3 }}
+            className="bg-white/10 backdrop-blur-lg rounded-2xl overflow-hidden border border-white/20 shadow-2xl"
+          >
+            <div className="bg-white/5 px-6 py-4 border-b border-white/20 flex items-center justify-between">
+              <h3 className="text-white font-semibold flex items-center gap-2">
+                <Camera className="text-[#3498db] w-5 h-5" />
+                Processed Stream
+              </h3>
+              <div className="flex items-center gap-2 text-sm">
+                <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[#2ecc71]' : 'bg-[#e74c3c]'} animate-pulse`}></span>
+                <span className="text-white">{fps} fps</span>
+              </div>
+            </div>
+            
+            <div className="relative w-full h-[400px] bg-black/50">
+              {!isConnected && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="w-16 h-16 border-4 border-[#3498db] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-white">Connecting to stream...</p>
+                  </div>
+                </div>
+              )}
+              <video 
+                ref={videoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                className="w-full h-full object-cover"
+              />
+            </div>
+
+            {/* Legend */}
+            <div className="bg-white/5 px-6 py-3 flex gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="w-4 h-4 rounded bg-[#00ff00]"></span>
+                <span className="text-gray-300">Road hazards</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-4 h-4 rounded bg-[#00ffff]"></span>
+                <span className="text-gray-300">Standard objects</span>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Hazard Map */}
+          <motion.div 
+            initial={{ x: 30, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="bg-white/10 backdrop-blur-lg rounded-2xl overflow-hidden border border-white/20 shadow-2xl"
+          >
+            <div className="bg-white/5 px-6 py-4 border-b border-white/20 flex items-center justify-between">
+              <h3 className="text-white font-semibold flex items-center gap-2">
+                <MapPin className="text-[#e74c3c] w-5 h-5" />
+                Hazard Map
+              </h3>
+            </div>
+            
+            <iframe
+              src="/Map.html"
+              title="Road Hazard Map"
+              className="w-full h-[400px] border-none bg-white/5"
+              allowFullScreen
+            />
+          </motion.div>
         </div>
+
+        <HazardNotifier 
+          isConnected={isConnected}
+          hazardDetected={hazardDetected}
+          currentLocation={currentLocation}
+          onNotificationSent={handleNotificationSent}
+        />
+
+        {/* NearbyHazardNotifier now handles pothole notifications */}
+        <NearbyHazardNotifier currentLocation={currentLocation} />
+
+        <EmergencyBrakeNotifier 
+          hazardDistances={hazardDistances}
+          driverLaneHazardCount={driverLaneHazardCount}
+        />
       </div>
-
-      <div className="mt-3.5 flex gap-4 items-center text-[#4a5568]">
-        <div className="flex gap-2 items-center"><span className="w-3.5 h-3.5 rounded bg-[#00ff00] inline-block" /> Road hazards</div>
-        <div className="flex gap-2 items-center"><span className="w-3.5 h-3.5 rounded bg-[#00ffff] inline-block" /> Standard objects</div>
-      </div>
-
-      <HazardNotifier 
-        isConnected={isConnected}
-        hazardDetected={hazardDetected}
-        currentLocation={currentLocation}
-        onNotificationSent={handleNotificationSent}
-      />
-
-      {/* NearbyHazardNotifier now handles pothole notifications */}
-      <NearbyHazardNotifier currentLocation={currentLocation} />
-
-      <EmergencyBrakeNotifier 
-        hazardDistances={hazardDistances}
-        driverLaneHazardCount={driverLaneHazardCount}
-      />
       
-      <ToastContainer />
-    </div>
+      <ToastContainer 
+        position="top-right"
+        theme="dark"
+        toastClassName="backdrop-blur-lg bg-white/10"
+      />
+    </motion.div>
   );
 }
