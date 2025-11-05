@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import './LiveMode.css';
 import axios from 'axios';
 import HazardNotifier from './HazardNotifier';
 import NearbyHazardNotifier from './NearbyHazardNotifier';
@@ -22,6 +21,8 @@ export default function LiveMode() {
   const [detectionMode, setDetectionMode] = useState('live');
   const [videoProgress, setVideoProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [fps, setFps] = useState(0);
+  const frameCounterRef = useRef({ count: 0, lastTs: performance.now() });
 
   // Initialize alert sound
   useEffect(() => {
@@ -69,9 +70,10 @@ export default function LiveMode() {
     }
   }, []);
 
-  const connectWebSocket = () => {
+  const connectWebSocket = (retry = 0) => {
     if (wsRef.current) {
-      wsRef.current.close();
+      try { wsRef.current.onopen = null; wsRef.current.onmessage = null; wsRef.current.onerror = null; wsRef.current.onclose = null; } catch {}
+      try { wsRef.current.close(); } catch {}
     }
 
     // Use proxy in development (Vite dev server), direct connection in production
@@ -87,6 +89,8 @@ export default function LiveMode() {
     }
     
     wsRef.current = new WebSocket(wsURL);
+    // Prefer ArrayBuffer to cut Blob overhead
+    try { wsRef.current.binaryType = 'arraybuffer'; } catch {}
 
     wsRef.current.onopen = () => {
       setIsConnected(true);
@@ -105,6 +109,8 @@ export default function LiveMode() {
     wsRef.current.onmessage = (e) => {
       if (typeof e.data === 'string') {
         try {
+          // Ignore keepalive pings
+          if (e.data === 'ping') return;
           const parsedData = JSON.parse(e.data);
           const driverLaneHazardCount = parsedData.driver_lane_hazard_count;
           const hazardDistances = parsedData.hazard_distances || [];
@@ -163,32 +169,74 @@ export default function LiveMode() {
         } catch (err) {
           console.error("WebSocket JSON Error:", err);
         }
-      } else if (e.data instanceof Blob) {
-        const url = URL.createObjectURL(e.data);
-        let processedImg = document.getElementById('processed-feed');
-        if (!processedImg) {
-          processedImg = document.createElement('img');
-          processedImg.id = 'processed-feed';
-          processedImg.className = 'processed-feed';
-          videoRef.current.after(processedImg);
+      } else if (e.data instanceof ArrayBuffer || e.data instanceof Blob) {
+        const blob = e.data instanceof Blob ? e.data : new Blob([e.data], { type: 'image/jpeg' });
+        let canvas = document.getElementById('processed-canvas');
+        if (!canvas) {
+          canvas = document.createElement('canvas');
+          canvas.id = 'processed-canvas';
+          canvas.className = 'processed-feed';
+          videoRef.current.after(canvas);
         }
-        
-        if (processedImg.src) {
-          URL.revokeObjectURL(processedImg.src);
-        }
-        processedImg.src = url;
+        const ctx = canvas.getContext('2d');
+        // Use createImageBitmap for faster decode and draw
+        createImageBitmap(blob).then((bitmap) => {
+          if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+          }
+          ctx.drawImage(bitmap, 0, 0);
+          bitmap.close();
+
+          // FPS estimation
+          const fc = frameCounterRef.current;
+          fc.count += 1;
+          const now = performance.now();
+          if (now - fc.lastTs >= 1000) {
+            setFps(fc.count);
+            fc.count = 0;
+            fc.lastTs = now;
+          }
+        }).catch(() => {
+          // Fallback path if createImageBitmap not supported
+          const img = new Image();
+          img.onload = () => {
+            if (canvas.width !== img.width || canvas.height !== img.height) {
+              canvas.width = img.width;
+              canvas.height = img.height;
+            }
+            ctx.drawImage(img, 0, 0);
+
+            const fc = frameCounterRef.current;
+            fc.count += 1;
+            const now = performance.now();
+            if (now - fc.lastTs >= 1000) {
+              setFps(fc.count);
+              fc.count = 0;
+              fc.lastTs = now;
+            }
+          };
+          img.src = URL.createObjectURL(blob);
+        });
       }
     };
 
     wsRef.current.onerror = () => {
-      console.error("WebSocket error. Attempting to reconnect...");
+      if (retry % 10 === 0) {
+        console.error("WebSocket error. Attempting to reconnect...");
+      }
       setIsConnected(false);
     };
 
     wsRef.current.onclose = () => {
-      console.warn("WebSocket closed. Reconnecting in 3 seconds...");
+      const base = 1000; // 1s
+      const maxDelay = 30000; // 30s
+      const delay = Math.min(maxDelay, Math.round(base * Math.pow(2, Math.min(retry, 6)) + Math.random() * 500));
+      if (retry % 3 === 0) {
+        console.warn(`WebSocket closed. Reconnecting in ${Math.round(delay/1000)}s...`);
+      }
       setIsConnected(false);
-      setTimeout(connectWebSocket, 3000);
+      setTimeout(() => connectWebSocket(retry + 1), delay);
     };
   };
 
@@ -299,21 +347,46 @@ export default function LiveMode() {
   };
 
   return (
-    <div className="live-container">
-      <h1>Road Hazard Detection</h1>
-      
+    <div className="max-w-full mx-auto p-5 bg-white rounded-lg shadow-md">
+      <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
+        <h1 className="text-center mb-5 text-[#2c3e50] text-3xl">Road Hazard Detection</h1>
+        <div className="flex gap-2 flex-wrap">
+          <span className={`px-2.5 py-1.5 rounded-full text-sm font-semibold ${isConnected ? 'bg-[#e6fff0] text-[#0f9d58] border border-[#b7f0d0]' : 'bg-[#fff5e5] text-[#e67e22] border border-[#ffd8a8]'}`}>
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </span>
+          <span className="px-2.5 py-1.5 rounded-full text-sm font-semibold bg-[#eef2f7] text-[#34495e] border border-[#d9e2ec]">
+            Mode: {detectionMode === 'live' ? 'Live Camera' : 'Video File'}
+          </span>
+          {detectionMode === 'video' && (
+            <span className="px-2.5 py-1.5 rounded-full text-sm font-semibold bg-[#eef2f7] text-[#34495e] border border-[#d9e2ec]">
+              Progress: {videoProgress ? `${videoProgress.toFixed(1)}%` : '—'}
+            </span>
+          )}
+          <span className="px-2.5 py-1.5 rounded-full text-sm font-semibold bg-[#eef2f7] text-[#34495e] border border-[#d9e2ec]">
+            FPS: {fps}
+          </span>
+          <span className={`px-2.5 py-1.5 rounded-full text-sm font-semibold ${driverLaneHazardCount > 0 ? 'bg-[#ffeaea] text-[#d32f2f] border border-[#ffbdbd]' : 'bg-[#e6fff0] text-[#0f9d58] border border-[#b7f0d0]'}`}>
+            Lane Hazards: {driverLaneHazardCount}
+          </span>
+        </div>
+      </div>
+
       {/* Mode Toggle */}
-      <div className="mode-controls">
-        <div className="mode-toggle">
+      <div className="flex flex-col items-center gap-4 mb-5 p-4 bg-[#f8f9fa] rounded-lg">
+        <div className="flex gap-2.5">
           <button
-            className={`mode-btn ${detectionMode === 'live' ? 'active' : ''}`}
+            className={`px-6 py-3 text-base font-bold border-2 rounded-md transition-all duration-300 ${detectionMode === 'live' 
+              ? 'bg-[#3498db] text-white border-[#3498db] shadow-md' 
+              : 'bg-white text-[#3498db] border-[#3498db] hover:bg-[#3498db] hover:text-white hover:-translate-y-0.5 hover:shadow-md'} ${uploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
             onClick={() => handleModeSwitch('live')}
             disabled={uploading}
           >
             📹 Live Camera
           </button>
           <button
-            className={`mode-btn ${detectionMode === 'video' ? 'active' : ''}`}
+            className={`px-6 py-3 text-base font-bold border-2 rounded-md transition-all duration-300 ${detectionMode === 'video' 
+              ? 'bg-[#3498db] text-white border-[#3498db] shadow-md' 
+              : 'bg-white text-[#3498db] border-[#3498db] hover:bg-[#3498db] hover:text-white hover:-translate-y-0.5 hover:shadow-md'} ${uploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
             onClick={() => handleModeSwitch('video')}
             disabled={uploading}
           >
@@ -323,7 +396,7 @@ export default function LiveMode() {
 
         {/* File Upload Section */}
         {detectionMode === 'video' && (
-          <div className="upload-section">
+          <div className="flex gap-2.5 items-center">
             <input
               ref={fileInputRef}
               type="file"
@@ -333,11 +406,17 @@ export default function LiveMode() {
               id="video-upload-input"
               disabled={uploading}
             />
-            <label htmlFor="video-upload-input" className="upload-btn">
+            <label 
+              htmlFor="video-upload-input" 
+              className="px-6 py-3 text-base font-bold border-2 border-[#27ae60] rounded-md bg-white text-[#27ae60] cursor-pointer transition-all duration-300 inline-block hover:bg-[#27ae60] hover:text-white hover:-translate-y-0.5 hover:shadow-md"
+            >
               {uploading ? 'Uploading...' : '📁 Upload Video'}
             </label>
             {detectionMode === 'video' && videoProgress > 0 && (
-              <button className="stop-video-btn" onClick={handleStopVideo}>
+              <button 
+                className="px-6 py-3 text-base font-bold border-2 border-[#e74c3c] rounded-md bg-white text-[#e74c3c] cursor-pointer transition-all duration-300 hover:bg-[#e74c3c] hover:text-white hover:-translate-y-0.5 hover:shadow-md"
+                onClick={handleStopVideo}
+              >
                 ⏹ Stop Video
               </button>
             )}
@@ -346,33 +425,55 @@ export default function LiveMode() {
       </div>
 
       {/* Status Display */}
-      <div className={`camera-status ${detectionMode === 'live' ? 'live-mode' : 'video-mode'}`}>
+      <div className={`text-center mb-5 py-2.5 px-4 rounded font-bold text-white ${detectionMode === 'live' 
+        ? 'bg-gradient-to-r from-[#e74c3c] to-[#c0392b]' 
+        : 'bg-gradient-to-r from-[#9b59b6] to-[#8e44ad]'}`}>
         {detectionMode === 'live' 
           ? '🔴 Live Camera (YOLO Detection Active)' 
           : `🎬 Video File Mode ${videoProgress > 0 ? `- ${videoProgress.toFixed(1)}%` : ''}`}
       </div>
 
-      <div className="content-grid">
-        <div className="feed-column">
-          <div className="video-container">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="relative rounded-lg overflow-hidden shadow-md bg-white/75 backdrop-blur-md">
+          <div className="flex items-center justify-between py-2.5 px-3 font-semibold text-[#2c3e50] border-b border-black/5">
+            <span>Processed Stream</span>
+          </div>
+          <div className="w-full h-[400px] overflow-hidden relative">
+            {!isConnected && (
+              <div className="absolute inset-0 rounded-lg overflow-hidden">
+                <div className="w-full h-full bg-gradient-to-r from-[#e6eaf0]/70 via-[#f5f7fa]/90 to-[#e6eaf0]/70 animate-shimmer" />
+              </div>
+            )}
             <video 
               ref={videoRef} 
               autoPlay 
               playsInline 
               muted 
-              className="live-feed"
+              className="w-full h-full object-cover rounded-lg border-2 border-[#3498db]"
             />
+            <div className="absolute bottom-2.5 right-2.5 bg-black/55 text-white py-1 px-2 rounded-full text-xs flex gap-1.5 items-center">
+              <span className={`w-2 h-2 rounded-full inline-block ${isConnected ? 'bg-[#34c759]' : 'bg-[#ff9f0a]'}`} />
+              <span>{fps} fps</span>
+            </div>
           </div>
         </div>
 
-        <div className="map-column">
+        <div className="relative rounded-lg overflow-hidden shadow-md bg-white/75 backdrop-blur-md">
+          <div className="flex items-center justify-between py-2.5 px-3 font-semibold text-[#2c3e50] border-b border-black/5">
+            <span>Hazard Map</span>
+          </div>
           <iframe
             src="/Map.html"
             title="Road Hazard Map"
-            className="map-iframe"
+            className="w-full h-[400px] border-none rounded-lg"
             allowFullScreen
           />
         </div>
+      </div>
+
+      <div className="mt-3.5 flex gap-4 items-center text-[#4a5568]">
+        <div className="flex gap-2 items-center"><span className="w-3.5 h-3.5 rounded bg-[#00ff00] inline-block" /> Road hazards</div>
+        <div className="flex gap-2 items-center"><span className="w-3.5 h-3.5 rounded bg-[#00ffff] inline-block" /> Standard objects</div>
       </div>
 
       <HazardNotifier 

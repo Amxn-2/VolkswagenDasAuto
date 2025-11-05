@@ -201,6 +201,8 @@ async def get_hazard_reports():
         
         return reports
     except Exception as e:
+        # Fail fast with empty array rather than hanging the UI
+        return []
         import traceback
         error_details = traceback.format_exc()
         print(f"Error fetching hazard reports: {error_details}")

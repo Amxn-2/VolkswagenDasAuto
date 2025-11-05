@@ -2,19 +2,29 @@ import asyncio
 import cv2
 import torch
 import numpy as np
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from typing import Optional, Dict
 from fastapi import WebSocket, WebSocketDisconnect
 from camera_manager import camera_manager
 from video_file_manager import video_file_manager
 from model_loader import road_model, standard_model
 from config import DETECTION_THRESHOLDS  # Import the thresholds from config
 from distance_estimator import DistanceEstimator
-from concurrent.futures import ThreadPoolExecutor
-import time
-from typing import Optional, Dict
-from datetime import datetime
-import json
-from gps_extractor import gps_extractor
 from neon_db import neon_db
+
+# Optional faster JPEG encoder
+try:
+    from turbojpeg import TurboJPEG, TJPF_BGR
+    _jpeg = TurboJPEG()
+    def encode_jpeg_bgr(image, quality=55):
+        return _jpeg.encode(image, pixel_format=TJPF_BGR, quality=quality)
+except Exception:
+    _jpeg = None
+    def encode_jpeg_bgr(image, quality=55):
+        _, jpeg = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        return jpeg.tobytes()
 
 # Import detection mode from mode_state
 import mode_state
@@ -47,164 +57,114 @@ def encode_frame_sync(frame, quality=JPEG_QUALITY):
 
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
-    # Performance tracking
-    last_frame_time = time.time()
-    frame_count = 0
-    skip_count = 0
-    pending_frame = None
-    current_gps = None  # GPS location from client
-    frame_number = 0
-    
+    # Throttle settings
+    frame_interval_s = 0.06  # start targeting ~16-20 FPS if bandwidth allows
+    json_interval_s = 0.20   # 5 Hz for JSON telemetry
+    ping_interval_s = 20.0   # keepalive ping
+
+    last_frame_sent = 0.0
+    last_json_sent = 0.0
+    last_ping_sent = 0.0
+
+    # Run heavy model inference less frequently to cut latency
+    detect_interval = 2  # run detection every N frames
+    frame_index = 0
+    cached_results = []
+    cached_driver_lane_hazard_count = 0
+    cached_hazard_distances = []
+    cached_mode = "live"
+
     try:
-        # Start receiving messages (including GPS updates)
-        async def receive_messages():
-            nonlocal current_gps
-            while True:
-                try:
-                    # Receive message - could be text (JSON) or bytes
-                    message = await websocket.receive()
-                    
-                    # Handle text messages (JSON)
-                    if 'text' in message:
-                        data = json.loads(message['text'])
-                        # Handle GPS updates from client
-                        if 'gps' in data:
-                            gps_data = data['gps']
-                            if 'lat' in gps_data and 'lng' in gps_data:
-                                gps_extractor.set_gps_location(
-                                    gps_data['lat'],
-                                    gps_data['lng']
-                                )
-                                current_gps = gps_data
-                                # Verify coordinate order: latitude should be between -90 and 90, longitude between -180 and 180
-                                lat = gps_data['lat']
-                                lng = gps_data['lng']
-                                if abs(lat) > 90 or abs(lng) > 180:
-                                    # Coordinates might be swapped
-                                    print(f"⚠️ Warning: GPS coordinates may be swapped! Received: lat={lat:.6f}, lng={lng:.6f}")
-                                    # Auto-correct if swapped
-                                    if abs(lat) <= 180 and abs(lng) <= 90:
-                                        print(f"🔄 Auto-correcting swapped coordinates")
-                                        current_gps = {'lat': lng, 'lng': lat}
-                                        gps_extractor.set_gps_location(lng, lat)
-                                else:
-                                    print(f"📍 GPS updated: lat={lat:.6f}, lng={lng:.6f}")
-                    # Ignore binary messages (video frames from client)
-                    elif 'bytes' in message:
-                        pass
-                except Exception as e:
-                    # Connection closed or error
-                    break
-        
-        # Start receiving messages in background
-        receive_task = asyncio.create_task(receive_messages())
-        
         while True:
             loop_start = time.time()
             current_mode = get_current_mode()
-            frame = None
-            
-            # Get frame based on current mode (non-blocking)
+
+            # Get the latest frame based on current mode, dropping stale frames
             if current_mode == "video":
-                # Get frame from video file manager
-                if not video_file_manager.frame_queue.empty():
-                    # Skip frames if queue is backing up
-                    while video_file_manager.frame_queue.qsize() > MAX_QUEUE_SIZE:
-                        try:
-                            video_file_manager.frame_queue.get_nowait()
-                            skip_count += 1
-                        except:
-                            break
-                    if not video_file_manager.frame_queue.empty():
-                        frame = video_file_manager.frame_queue.get()
+                while not video_file_manager.frame_queue.empty():
+                    frame = video_file_manager.frame_queue.get()
             else:
-                # Get frame from camera manager (live mode)
-                if camera_manager.camera_available and not camera_manager.frame_queue.empty():
-                    # Skip frames if queue is backing up
-                    while camera_manager.frame_queue.qsize() > MAX_QUEUE_SIZE:
-                        try:
-                            camera_manager.frame_queue.get_nowait()
-                            skip_count += 1
-                        except:
-                            break
-                    if not camera_manager.frame_queue.empty():
+                if camera_manager.camera_available:
+                    while not camera_manager.frame_queue.empty():
                         frame = camera_manager.frame_queue.get()
-            
-            # Process frame if available
-            if frame is not None:
-                frame_number += 1
-                
-                # Get GPS location (priority: client GPS > GPS extractor > frame metadata)
-                gps_location = current_gps
-                if not gps_location:
-                    gps_location = gps_extractor.get_current_gps()
-                if not gps_location:
-                    # Try to extract from frame
-                    video_path = video_file_manager.video_path if current_mode == "video" else None
-                    gps_location = gps_extractor.extract_from_frame(frame, video_path)
-                
-                # Process the frame with both YOLO models
-                results, driver_lane_hazard_count, vis_frame, hazard_distances = process_frame_with_models(frame)
-                
-                # Store detections with GPS in database
-                if results and len(results) > 0:
-                    await store_hazard_detections(
-                        results=results,
-                        driver_lane_hazard_count=driver_lane_hazard_count,
-                        hazard_distances=hazard_distances,
-                        gps_location=gps_location,
-                        frame_number=frame_number,
-                        current_mode=current_mode
-                    )
-                
-                # Encode frame asynchronously in thread pool
-                jpeg_bytes = await asyncio.get_event_loop().run_in_executor(
-                    executor,
-                    encode_frame_sync,
-                    vis_frame,
-                    JPEG_QUALITY
-                )
-                
-                if jpeg_bytes:
+
+            now = asyncio.get_event_loop().time()
+
+            # Only process and send a frame at the configured interval
+            if frame is not None and (now - last_frame_sent) >= frame_interval_s:
+                frame_index += 1
+
+                # Decide whether to run detection on this frame
+                run_detection = (frame_index % detect_interval) == 0
+
+                if run_detection:
+                    results, driver_lane_hazard_count, vis_frame, hazard_distances = process_frame_with_models(frame)
+                    cached_results = results
+                    cached_driver_lane_hazard_count = driver_lane_hazard_count
+                    cached_hazard_distances = hazard_distances
+                    cached_mode = current_mode
+                else:
+                    # No detection this frame: send raw frame (faster) and reuse last JSON
+                    vis_frame = frame
+                    results = cached_results
+                    driver_lane_hazard_count = cached_driver_lane_hazard_count
+                    hazard_distances = cached_hazard_distances
+                    current_mode = cached_mode
+                try:
+                    # Resize frame to reduce payload while preserving aspect
+                    max_width = 720
+                    if vis_frame.shape[1] > max_width:
+                        ratio = max_width / float(vis_frame.shape[1])
+                        new_size = (int(vis_frame.shape[1] * ratio), int(vis_frame.shape[0] * ratio))
+                        vis_frame = cv2.resize(vis_frame, new_size, interpolation=cv2.INTER_AREA)
+
+                    # JPEG compress with faster encoder when available
+                    jpeg_bytes = encode_jpeg_bgr(vis_frame, quality=55)
+                    send_start = asyncio.get_event_loop().time()
+                    await websocket.send_bytes(jpeg_bytes)
+                    last_frame_sent = now
+                    # Adaptive frame pacing based on send time
+                    send_time = asyncio.get_event_loop().time() - send_start
+                    if send_time > 0.10:
+                        frame_interval_s = min(0.20, frame_interval_s + 0.02)
+                    elif send_time < 0.02:
+                        frame_interval_s = max(0.05, frame_interval_s - 0.005)
+                except Exception:
+                    # If sending fails (client closed/slow), break the loop to close socket
+                    break
+
+                # Send compact JSON telemetry at its own cadence
+                if (now - last_json_sent) >= json_interval_s:
+                    total_hazard_count = len(results)
+                    pothole_detected = any(detection.get('type', '').lower() == 'pothole' for detection in results)
+                    video_progress = None
+                    if current_mode == "video" and video_file_manager.is_active():
+                        video_progress = video_file_manager.get_progress()
+
                     try:
-                        # Send processed frame
-                        await websocket.send_bytes(jpeg_bytes)
-                        
-                        # Send both total and driver lane hazard counts
-                        total_hazard_count = len(results)
-                        
-                        # Check if any detection is a pothole
-                        pothole_detected = any(detection.get('type', '').lower() == 'pothole' for detection in results)
-                        
-                        # Get video progress if in video mode
-                        video_progress = None
-                        if current_mode == "video" and video_file_manager.is_active():
-                            video_progress = video_file_manager.get_progress()
-                        
-                        # Send JSON data
                         await websocket.send_json({
                             "hazard_count": total_hazard_count,
                             "driver_lane_hazard_count": driver_lane_hazard_count,
                             "hazard_distances": hazard_distances,
                             "hazard_type": "pothole" if pothole_detected else "",
                             "mode": current_mode,
-                            "video_progress": video_progress,
-                            "gps_available": gps_location is not None
+                            "video_progress": video_progress
                         })
-                        
-                        frame_count += 1
-                        last_frame_time = time.time()
-                        
-                    except Exception as e:
-                        print(f"WebSocket send error: {e}")
-                        break  # Break on send error
-            
-            # Adaptive sleep based on actual frame processing time
-            elapsed = time.time() - loop_start
-            sleep_time = max(0.001, FRAME_INTERVAL - elapsed)
-            await asyncio.sleep(sleep_time)
-            
+                        last_json_sent = now
+                    except Exception:
+                        break
+
+            # Lightweight keepalive to avoid idle disconnects
+            if (now - last_ping_sent) >= ping_interval_s:
+                try:
+                    await websocket.send_text("ping")
+                    last_ping_sent = now
+                except Exception:
+                    break
+
+            # Yield control briefly
+            await asyncio.sleep(0.01)
+
     except WebSocketDisconnect:
         print(f"Client disconnected (sent {frame_count} frames, skipped {skip_count} frames)")
     except Exception as e:

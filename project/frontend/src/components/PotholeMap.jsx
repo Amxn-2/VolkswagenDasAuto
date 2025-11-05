@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import './PotholeMap.css';
 
 export default function PotholeMap() {
   const mapRef = useRef(null);
@@ -80,12 +79,12 @@ export default function PotholeMap() {
         // Create popup with pothole info
         const popup = new window.tt.Popup({ offset: 30 })
           .setHTML(`
-            <div class="pothole-popup">
-              <h3>Road Hazard</h3>
-              <p>Type: ${pothole.type}</p>
-              <p>Severity: ${pothole.severity}</p>
-              <p>Reported: ${new Date(pothole.timestamp).toLocaleString()}</p>
-              <p>Status: ${pothole.status}</p>
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 0.9rem;">
+              <h3 style="margin-top: 0; margin-bottom: 5px; font-size: 1rem;">Road Hazard</h3>
+              <p style="margin: 4px 0;">Type: ${pothole.type}</p>
+              <p style="margin: 4px 0;">Severity: ${pothole.severity}</p>
+              <p style="margin: 4px 0;">Reported: ${new Date(pothole.timestamp).toLocaleString()}</p>
+              <p style="margin: 4px 0;">Status: ${pothole.status}</p>
             </div>
           `);
           
@@ -113,24 +112,24 @@ export default function PotholeMap() {
   }, [potholes]);
   
   return (
-    <div className="pothole-map-container">
-      <h1>Pothole Map</h1>
+    <div className="w-full p-5 box-border font-['Segoe_UI',Tahoma,Geneva,Verdana,sans-serif] text-gray-800">
+      <h1 className="text-center mb-5">Pothole Map</h1>
       
-      {loading && <div className="loading">Loading pothole data...</div>}
-      {error && <div className="error">{error}</div>}
+      {loading && <div className="text-center py-2.5 my-2.5 text-base text-blue-600">Loading pothole data...</div>}
+      {error && <div className="text-center py-2.5 my-2.5 text-base text-red-600">{error}</div>}
       
-      <div className="map-stats">
-        <div className="stat-box">
-          <h3>Total Locations Prone to Potholes</h3>
-          <p>{potholes.length}</p>
+      <div className="flex flex-wrap justify-center items-center mb-5 bg-gray-100 p-4 rounded-lg shadow-md">
+        <div className="text-center my-2.5 flex-1 min-w-[250px]">
+          <h3 className="mb-2 text-lg text-gray-600">Total Locations Prone to Potholes</h3>
+          <p className="text-2xl font-bold m-0">{potholes.length}</p>
         </div>
-        <div className="stat-box">
-          <h3>Recent Reports</h3>
-          <p>{potholes.filter(p => new Date(p.timestamp) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).length}</p>
+        <div className="text-center my-2.5 flex-1 min-w-[250px]">
+          <h3 className="mb-2 text-lg text-gray-600">Recent Reports</h3>
+          <p className="text-2xl font-bold m-0">{potholes.filter(p => new Date(p.timestamp) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).length}</p>
         </div>
       </div>
       
-      <div ref={mapRef} className="map-container"></div>
+      <div ref={mapRef} className="w-full h-[500px] border-2 border-gray-300 rounded-lg"></div>
     </div>
   );
 }
