@@ -90,11 +90,36 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        secure: false,
       },
       '/ws': {
         target: 'http://127.0.0.1:8000',
         ws: true,
         changeOrigin: true,
+        secure: false,
+        configure: (proxy, _options) => {
+          proxy.on('error', (err, _req, _res) => {
+            // Silently handle WebSocket connection errors
+            // These are expected when the backend is not running or connection is aborted
+            const ignoredCodes = ['ECONNREFUSED', 'ECONNABORTED', 'ECONNRESET', 'EPIPE'];
+            if (!ignoredCodes.includes(err.code)) {
+              console.error('WebSocket proxy error:', err);
+            }
+          });
+          proxy.on('proxyReqWs', (proxyReq, req, socket) => {
+            // Handle WebSocket upgrade and socket errors
+            socket.on('error', (err) => {
+              // Silently handle socket errors that are common during connection issues
+              const ignoredCodes = ['ECONNABORTED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'];
+              if (!ignoredCodes.includes(err.code)) {
+                console.error('WebSocket socket error:', err);
+              }
+            });
+          });
+          proxy.on('close', () => {
+            // Silently handle proxy close events
+          });
+        },
       },
     },
   },
