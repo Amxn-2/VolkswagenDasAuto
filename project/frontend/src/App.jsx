@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useState, useEffect } from 'react';
 import ErrorBoundary from './components/ErrorBoundary';
+import VideoLoader from './components/VideoLoader';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
 import LandingPage from './components/LandingPage';
 import LiveMode from './components/LiveMode';
@@ -59,12 +61,35 @@ function AnimatedRoutes() {
 }
 
 export default function App() {
+  const [showVideoLoader, setShowVideoLoader] = useState(true);
+  const [hasSeenLoader, setHasSeenLoader] = useState(false);
+
+  useEffect(() => {
+    // Check if user has seen the loader before (stored in sessionStorage)
+    const seenLoader = sessionStorage.getItem('hasSeenVideoLoader');
+    if (seenLoader === 'true') {
+      setShowVideoLoader(false);
+      setHasSeenLoader(true);
+    }
+  }, []);
+
+  const handleVideoComplete = () => {
+    setShowVideoLoader(false);
+    setHasSeenLoader(true);
+    // Remember that user has seen the loader in this session
+    sessionStorage.setItem('hasSeenVideoLoader', 'true');
+  };
+
   return (
     <ErrorBoundary>
-      <Router>
-        <AnimatedRoutes />
-        <PWAInstallPrompt />
-      </Router>
+      {showVideoLoader ? (
+        <VideoLoader onComplete={handleVideoComplete} />
+      ) : (
+        <Router>
+          <AnimatedRoutes />
+          <PWAInstallPrompt />
+        </Router>
+      )}
     </ErrorBoundary>
   );
 }
