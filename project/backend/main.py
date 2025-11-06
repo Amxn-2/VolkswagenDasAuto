@@ -142,7 +142,8 @@ async def set_mode(request: ModeRequest):
         # Stop video processing
         video_file_manager.stop_processing()
         # Ensure camera is running (if available)
-        if not camera_manager.running and camera_manager.active_camera is None:
+        # start_stream() will find camera if active_camera is None
+        if not camera_manager.running:
             camera_manager.start_stream()
         mode_state.detection_mode = "live"
     elif mode == "video":

@@ -3,7 +3,7 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import axios from 'axios';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Camera, Video, Upload, Square, MapPin } from 'lucide-react';
+import { ArrowLeft, Camera, Video, Upload, StopCircle, MapPin } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import HazardNotifier from './HazardNotifier';
 import NearbyHazardNotifier from './NearbyHazardNotifier';
@@ -11,6 +11,7 @@ import EmergencyBrakeNotifier from './EmergencyBrakeNotifier';
 
 export default function LiveMode() {
   const videoRef = useRef(null);
+  const canvasContainerRef = useRef(null);
   const wsRef = useRef(null);
   const alertRef = useRef(null);
   const cooldownRef = useRef(null);
@@ -25,6 +26,7 @@ export default function LiveMode() {
   const [videoProgress, setVideoProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [fps, setFps] = useState(0);
+  const [error, setError] = useState(null);
   const frameCounterRef = useRef({ count: 0, lastTs: performance.now() });
 
   // Initialize alert sound
@@ -42,9 +44,19 @@ export default function LiveMode() {
 
   // Get current location and send to WebSocket
   useEffect(() => {
+    let watchId = null;
+    let locationWarningToastId = null;
+
     if (navigator.geolocation) {
-      navigator.geolocation.watchPosition(
+      // First try to get current position (one-time check)
+      navigator.geolocation.getCurrentPosition(
         (position) => {
+          // Successfully got location - clear any existing warnings
+          if (locationWarningToastId) {
+            toast.dismiss(locationWarningToastId);
+            locationWarningToastId = null;
+          }
+          
           const newLocation = {
             lat: position.coords.latitude,
             lng: position.coords.longitude
@@ -59,8 +71,60 @@ export default function LiveMode() {
           }
         },
         (error) => {
-          console.error("Error getting location:", error);
-          toast.warning("Location access is needed for hazard reporting");
+          // Only show warning for permission denied (error code 1)
+          if (error.code === error.PERMISSION_DENIED) {
+            locationWarningToastId = toast.warning("Location access is needed for hazard reporting. Please enable location permissions in your browser settings.", {
+              autoClose: false,
+              closeOnClick: true,
+            });
+          } else {
+            // Other errors (timeout, position unavailable) - just log, don't show warning
+            console.warn("Location error:", error.message);
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 5000,
+          timeout: 10000
+        }
+      );
+
+      // Then start watching position for updates
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          // Successfully got location - clear any existing warnings
+          if (locationWarningToastId) {
+            toast.dismiss(locationWarningToastId);
+            locationWarningToastId = null;
+          }
+
+          const newLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          setCurrentLocation(newLocation);
+          
+          // Send GPS to WebSocket server if connected
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+              gps: newLocation
+            }));
+          }
+        },
+        (error) => {
+          // Only show warning for permission denied (error code 1)
+          if (error.code === error.PERMISSION_DENIED) {
+            // Only show warning if we don't already have one
+            if (!locationWarningToastId) {
+              locationWarningToastId = toast.warning("Location access is needed for hazard reporting. Please enable location permissions in your browser settings.", {
+                autoClose: false,
+                closeOnClick: true,
+              });
+            }
+          } else {
+            // Other errors (timeout, position unavailable) - just log, don't show warning
+            console.warn("Location watch error:", error.message);
+          }
         },
         {
           enableHighAccuracy: true,
@@ -71,6 +135,16 @@ export default function LiveMode() {
     } else {
       toast.warning("Geolocation is not supported by this browser");
     }
+
+    // Cleanup: stop watching position when component unmounts
+    return () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+      if (locationWarningToastId) {
+        toast.dismiss(locationWarningToastId);
+      }
+    };
   }, []);
 
   const connectWebSocket = (retry = 0) => {
@@ -173,43 +247,64 @@ export default function LiveMode() {
           console.error("WebSocket JSON Error:", err);
         }
       } else if (e.data instanceof ArrayBuffer || e.data instanceof Blob) {
-        const blob = e.data instanceof Blob ? e.data : new Blob([e.data], { type: 'image/jpeg' });
-        let canvas = document.getElementById('processed-canvas');
-        if (!canvas) {
-          canvas = document.createElement('canvas');
-          canvas.id = 'processed-canvas';
-          canvas.className = 'processed-feed';
-          videoRef.current.after(canvas);
-        }
-        const ctx = canvas.getContext('2d');
-        // Use createImageBitmap for faster decode and draw
-        createImageBitmap(blob).then((bitmap) => {
-          if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
+        try {
+          const blob = e.data instanceof Blob ? e.data : new Blob([e.data], { type: 'image/jpeg' });
+          const container = canvasContainerRef.current;
+          if (!container) {
+            console.error('Canvas container not found');
+            return;
           }
-          ctx.drawImage(bitmap, 0, 0);
-          bitmap.close();
 
-          // FPS estimation
-          const fc = frameCounterRef.current;
-          fc.count += 1;
-          const now = performance.now();
-          if (now - fc.lastTs >= 1000) {
-            setFps(fc.count);
-            fc.count = 0;
-            fc.lastTs = now;
+          let canvas = document.getElementById('processed-canvas');
+          if (!canvas) {
+            canvas = document.createElement('canvas');
+            canvas.id = 'processed-canvas';
+            canvas.className = 'absolute inset-0 w-full h-full object-cover';
+            canvas.style.position = 'absolute';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            canvas.style.zIndex = '10';
+            container.appendChild(canvas);
           }
-        }).catch(() => {
-          // Fallback path if createImageBitmap not supported
-          const img = new Image();
-          img.onload = () => {
-            if (canvas.width !== img.width || canvas.height !== img.height) {
-              canvas.width = img.width;
-              canvas.height = img.height;
+
+          const ctx = canvas.getContext('2d');
+          
+          // Hide video element when canvas is active
+          if (videoRef.current) {
+            videoRef.current.style.display = 'none';
+          }
+
+          // Use createImageBitmap for faster decode and draw
+          createImageBitmap(blob).then((bitmap) => {
+            if (!canvas || !ctx) return;
+            
+            // Calculate aspect ratio and sizing
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            const imageAspect = bitmap.width / bitmap.height;
+            const containerAspect = containerWidth / containerHeight;
+
+            if (imageAspect > containerAspect) {
+              // Image is wider - fit to width
+              canvas.width = containerWidth;
+              canvas.height = containerWidth / imageAspect;
+              canvas.style.top = `${(containerHeight - canvas.height) / 2}px`;
+              canvas.style.left = '0';
+            } else {
+              // Image is taller - fit to height
+              canvas.height = containerHeight;
+              canvas.width = containerHeight * imageAspect;
+              canvas.style.left = `${(containerWidth - canvas.width) / 2}px`;
+              canvas.style.top = '0';
             }
-            ctx.drawImage(img, 0, 0);
 
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+            bitmap.close();
+
+            // FPS estimation
             const fc = frameCounterRef.current;
             fc.count += 1;
             const now = performance.now();
@@ -218,9 +313,53 @@ export default function LiveMode() {
               fc.count = 0;
               fc.lastTs = now;
             }
-          };
-          img.src = URL.createObjectURL(blob);
-        });
+          }).catch((err) => {
+            console.error('Error creating image bitmap:', err);
+            // Fallback path if createImageBitmap not supported
+            const img = new Image();
+            img.onload = () => {
+              if (!canvas || !ctx) return;
+              
+              const containerWidth = container.clientWidth;
+              const containerHeight = container.clientHeight;
+              const imageAspect = img.width / img.height;
+              const containerAspect = containerWidth / containerHeight;
+
+              if (imageAspect > containerAspect) {
+                canvas.width = containerWidth;
+                canvas.height = containerWidth / imageAspect;
+                canvas.style.top = `${(containerHeight - canvas.height) / 2}px`;
+                canvas.style.left = '0';
+              } else {
+                canvas.height = containerHeight;
+                canvas.width = containerHeight * imageAspect;
+                canvas.style.left = `${(containerWidth - canvas.width) / 2}px`;
+                canvas.style.top = '0';
+              }
+
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              URL.revokeObjectURL(img.src);
+
+              const fc = frameCounterRef.current;
+              fc.count += 1;
+              const now = performance.now();
+              if (now - fc.lastTs >= 1000) {
+                setFps(fc.count);
+                fc.count = 0;
+                fc.lastTs = now;
+              }
+            };
+            img.onerror = (err) => {
+              console.error('Error loading image:', err);
+              URL.revokeObjectURL(img.src);
+            };
+            img.src = URL.createObjectURL(blob);
+          });
+        } catch (err) {
+          console.error('Error processing frame:', err);
+          setError(err.message);
+        }
       }
     };
 
@@ -261,9 +400,20 @@ export default function LiveMode() {
 
     return () => {
       if (wsRef.current) {
-        wsRef.current.close();
+        try {
+          wsRef.current.close();
+        } catch (e) {
+          console.error('Error closing WebSocket:', e);
+        }
       }
       
+      // Clean up canvas
+      const canvas = document.getElementById('processed-canvas');
+      if (canvas) {
+        canvas.remove();
+      }
+      
+      // Clean up any image URLs
       const processedImg = document.getElementById('processed-feed');
       if (processedImg) {
         if (processedImg.src) {
@@ -273,6 +423,16 @@ export default function LiveMode() {
       }
     };
   }, []);
+
+  // Clean up canvas when component unmounts or mode changes
+  useEffect(() => {
+    return () => {
+      const canvas = document.getElementById('processed-canvas');
+      if (canvas) {
+        canvas.remove();
+      }
+    };
+  }, [detectionMode]);
 
   const handleNotificationSent = (hazard, response) => {
     if (response.success) {
@@ -294,28 +454,31 @@ export default function LiveMode() {
   };
 
   const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    // Validate file type
-    const allowedTypes = ['video/mp4', 'video/avi', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'video/x-matroska'];
-    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(mp4|avi|mov|mkv|webm|flv|wmv)$/i)) {
-      toast.error('Unsupported file format. Please upload MP4, AVI, MOV, MKV, WEBM, FLV, or WMV files.');
-      return;
-    }
-
-    setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      // Validate file type
+      const allowedTypes = ['video/mp4', 'video/avi', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'video/x-matroska'];
+      if (!allowedTypes.includes(file.type) && !file.name.match(/\.(mp4|avi|mov|mkv|webm|flv|wmv)$/i)) {
+        toast.error('Unsupported file format. Please upload MP4, AVI, MOV, MKV, WEBM, FLV, or WMV files.');
+        return;
+      }
+
+      setUploading(true);
+      setError(null);
+      const formData = new FormData();
+      formData.append('file', file);
+
       const response = await axios.post('/api/upload-video', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
         onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          toast.info(`Uploading: ${percentCompleted}%`);
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            toast.info(`Uploading: ${percentCompleted}%`);
+          }
         },
       });
 
@@ -329,7 +492,9 @@ export default function LiveMode() {
       }
     } catch (error) {
       console.error('Error uploading video:', error);
-      toast.error(error.response?.data?.detail || 'Failed to upload video');
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to upload video';
+      toast.error(errorMessage);
+      setError(errorMessage);
     } finally {
       setUploading(false);
     }
@@ -348,6 +513,11 @@ export default function LiveMode() {
       toast.error('Failed to stop video');
     }
   };
+
+  // Prevent white screen on errors
+  if (error && !isConnected && !uploading) {
+    console.error('Component error state:', error);
+  }
 
   return (
     <motion.div 
@@ -545,12 +715,22 @@ export default function LiveMode() {
               </div>
             </div>
             
-            <div className="relative w-full h-[400px] bg-black/50">
+            <div 
+              ref={canvasContainerRef}
+              className="relative w-full h-[400px] bg-black/50 overflow-hidden"
+            >
               {!isConnected && (
-                <div className="absolute inset-0 flex items-center justify-center">
+                <div className="absolute inset-0 flex items-center justify-center z-20">
                   <div className="text-center">
                     <div className="w-16 h-16 border-4 border-[#3498db] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                     <p className="text-white">Connecting to stream...</p>
+                  </div>
+                </div>
+              )}
+              {error && (
+                <div className="absolute inset-0 flex items-center justify-center z-20 bg-red-900/20">
+                  <div className="text-center p-4">
+                    <p className="text-red-400 text-sm">{error}</p>
                   </div>
                 </div>
               )}
@@ -559,8 +739,10 @@ export default function LiveMode() {
                 autoPlay 
                 playsInline 
                 muted 
-                className="w-full h-full object-cover"
+                className="absolute inset-0 w-full h-full object-cover z-0"
+                style={{ display: isConnected ? 'block' : 'none' }}
               />
+              {/* Canvas will be inserted here dynamically by WebSocket handler */}
             </div>
 
             {/* Legend */}
@@ -616,7 +798,7 @@ export default function LiveMode() {
       </div>
       
       <ToastContainer 
-        position="top-right"
+        position="bottom-right"
         theme="dark"
         toastClassName="backdrop-blur-lg bg-white/10"
       />

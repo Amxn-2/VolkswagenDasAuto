@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
+import ErrorBoundary from './components/ErrorBoundary';
 import LandingPage from './components/LandingPage';
 import LiveMode from './components/LiveMode';
 import PotholeMap from './components/PotholeMap';
@@ -58,8 +59,10 @@ function AnimatedRoutes() {
 
 export default function App() {
   return (
-    <Router>
-      <AnimatedRoutes />
-    </Router>
+    <ErrorBoundary>
+      <Router>
+        <AnimatedRoutes />
+      </Router>
+    </ErrorBoundary>
   );
 }

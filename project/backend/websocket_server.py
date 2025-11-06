@@ -78,12 +78,17 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             loop_start = time.time()
             current_mode = get_current_mode()
+            
+            # Initialize frame to None at start of each loop
+            frame = None
 
             # Get the latest frame based on current mode, dropping stale frames
             if current_mode == "video":
+                # Get the most recent frame from video queue (drop older ones)
                 while not video_file_manager.frame_queue.empty():
                     frame = video_file_manager.frame_queue.get()
             else:
+                # Get the most recent frame from camera queue (drop older ones)
                 if camera_manager.camera_available:
                     while not camera_manager.frame_queue.empty():
                         frame = camera_manager.frame_queue.get()
