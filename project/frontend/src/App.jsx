@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import ErrorBoundary from './components/ErrorBoundary';
+import PWAInstallPrompt from './components/PWAInstallPrompt';
 import LandingPage from './components/LandingPage';
 import LiveMode from './components/LiveMode';
 import PotholeMap from './components/PotholeMap';
@@ -62,6 +63,7 @@ export default function App() {
     <ErrorBoundary>
       <Router>
         <AnimatedRoutes />
+        <PWAInstallPrompt />
       </Router>
     </ErrorBoundary>
   );

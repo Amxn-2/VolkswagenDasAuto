@@ -19,6 +19,7 @@ import {
   Zap
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import PWAInstallPrompt from './PWAInstallPrompt';
 
 // Animated Road Component
 function AnimatedRoad() {
@@ -728,7 +729,7 @@ export default function LandingPage() {
       <TechnologySection />
       <CTASection />
       <Footer />
+      <PWAInstallPrompt />
     </div>
   );
 }
-
