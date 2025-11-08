@@ -1,0 +1,44 @@
+===========================================
+HOW RENDER.YAML WORKS WITH MONOREPO
+===========================================
+
+Your repository structure:
+├── render.yaml          (MUST be at root - Render requirement)
+├── project/
+│   ├── backend/         (Backend code)
+│   └── frontend/        (Frontend code)
+└── ...
+
+HOW IT WORKS:
+=============
+
+1. render.yaml Location:
+   - MUST be at repository root (Render requirement)
+   - Render looks for it when you connect GitHub repo
+
+2. rootDir Setting:
+   - rootDir: project/backend tells Render:
+     "Use project/backend as the working directory"
+   - All build/start commands run from project/backend/
+   - Frontend files are in repo but NOT used for this service
+
+3. What Render Does:
+   ✅ Clones entire repository (including frontend)
+   ✅ Sets working directory to project/backend
+   ✅ Runs: pip install -r requirements.txt (from backend/)
+   ✅ Runs: python main.py (from backend/)
+   ❌ Frontend is ignored (not part of this service)
+
+4. Frontend Deployment (if needed later):
+   - Option 1: Add another service to render.yaml
+   - Option 2: Deploy frontend separately (Vercel, Netlify, etc.)
+   - Option 3: Serve frontend from backend (already configured in main.py)
+
+CURRENT SETUP:
+=============
+- Backend service: Deploys from project/backend/
+- Frontend: Can be served by backend OR deployed separately
+- render.yaml: At root (required), but points to backend directory
+
+This is the CORRECT setup for a monorepo! ✅
+

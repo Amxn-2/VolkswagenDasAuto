@@ -177,7 +177,9 @@ dmypy.json
 *.swp
 *.swo
 *~
+*.md
 
+/*.md
 # Emacs
 *~
 \#*\#
