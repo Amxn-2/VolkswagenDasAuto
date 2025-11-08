@@ -19,14 +19,18 @@ const getWebSocketUrl = () => {
   if (import.meta.env.VITE_API_BASE_URL) {
     const apiUrl = import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
     // Convert http/https to ws/wss
-    return apiUrl.replace(/^http/, 'ws') + '/ws';
+    const wsUrl = apiUrl.replace(/^http/, 'ws') + '/ws';
+    console.log('WebSocket URL from env:', wsUrl);
+    return wsUrl;
   }
   
   // In development, use current origin
   // In production, use current origin (assuming backend is on same domain or CORS is configured)
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
-  return `${protocol}//${host}/ws`;
+  const wsUrl = `${protocol}//${host}/ws`;
+  console.log('WebSocket URL from origin:', wsUrl);
+  return wsUrl;
 };
 
 export const API_BASE_URL = getApiBaseUrl();
