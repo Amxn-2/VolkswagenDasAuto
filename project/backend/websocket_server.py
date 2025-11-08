@@ -59,6 +59,8 @@ def encode_frame_sync(frame, quality=JPEG_QUALITY):
         return None
 
 async def websocket_endpoint(websocket: WebSocket):
+    # Accept WebSocket connection with CORS headers
+    origin = websocket.headers.get("origin")
     await websocket.accept()
     # Optimized throttle settings for higher FPS
     frame_interval_s = 0.033  # Target ~30 FPS
